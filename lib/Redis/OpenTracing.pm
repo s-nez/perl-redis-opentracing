@@ -5,32 +5,20 @@ use warnings;
 
 use syntax 'maybe';
 
-our $VERSION = 'v0.0.2';
+our $VERSION = 'v0.3.0';
 
 use Moo;
-use Types::Standard qw/Maybe Object Str is_Str/;
+use Types::Standard qw/HashRef Maybe Object Str Value is_Str/;
 
-use Redis;
-use OpenTracing::AutoScope;
 use OpenTracing::GlobalTracer;
 use Scalar::Util 'blessed';
-
-
+use Carp qw/croak/ ;
 
 has 'redis' => (
-    is => 'lazy',
+    is => 'ro',
     isa => Object, # beyond current scope to detect if it is a Redis like client
+    required => 1,
 );
-
-# _build_redis()
-#
-# returns a (auto-connected) Redis instance. We may opt for Redis::Fast instead,
-# but will leave that for a later itteration. It is always possible to
-# instantiate any client and inject it inti the constructor.
-#
-sub _build_redis {
-    Redis->new
-}
 
 
 
@@ -53,55 +41,103 @@ sub _operation_name {
 
 
 
-has '_peer_address' => (
-    is => 'lazy',
-    isa => Maybe[ Str ],
+has 'tags' => (
+    is => 'ro',
+    isa => HashRef[Value],
+    default => sub { {} }, # an empty HashRef
 );
-
-sub _build__peer_address {
-    my ( $self ) = @_;
-    
-    return "@{[ $self->redis->{ server } ]}"
-        if exists $self->redis->{ server };
-    # currentl, we're fine with any stringification of a blessed hashref too
-    # but for Redis, Redis::Fast, Test::Mock::Redis, this is just a string
-    
-    return
-}
 
 
 
 our $AUTOLOAD; # keep 'use strict' happy
 
 sub AUTOLOAD {
-    my $self = shift;
+    my ($self) = @_;
     
-    my $method_call = do { $_ = $AUTOLOAD; s/.*:://; $_ };
+    my $method_call    = do { $_ = $AUTOLOAD; s/.*:://; $_ };
+    my $component_name = $self->_redis_client_class_name( );
+    my $db_statement   = uc($method_call);
+    my $operation_name = $self->_operation_name( $method_call );
     
-    do {
-        OpenTracing::AutoScope->start_guarded_span(
-            $self->_operation_name( $method_call )
+    my $method_wrap = sub {
+        my $self = shift;
+        my $scope = _global_tracer_start_active_span(
+            $operation_name,
+            tags => {
+                'component'     => $component_name,
+                
+                %{ $self->tags( ) },
+                
+                'db.statement'  => $db_statement,
+                'db.type'       => 'redis',
+                'span.kind'     => 'client',
+                
+            },
         );
         
-        OpenTracing::GlobalTracer
-            ->get_global_tracer( )
-            ->get_active_span
-            ->add_tags(
-                'component'     => __PACKAGE__,
-                'db.statement'  => uc($method_call),
-                'db.type'       => 'redis',
-                maybe
-                'peer.address'  => $self->_peer_address( ),
-                'span.kind'     => 'client',
-            )
-        ;
+        my $result;
+        my $wantarray = wantarray();
         
-        return $self->redis->$method_call(@_);
+        my $ok = eval {
+            if ($wantarray) {
+                $result = [ $self->redis->$method_call(@_) ];
+            } else {
+                $result = $self->redis->$method_call(@_);
+            };
+            1;
+        };
+        my $error = $@;
         
-    }
-    #
-    # this is a laymans way of doing it, there are no tags set, nor any other
-    # useful information passed on... patches welcome!
+        if ( $ok ) {
+            $scope->close()
+        } else {
+            $scope->get_span()->add_tags(
+                generate_error_tags( $db_statement, $error )
+            );
+            $scope->close();
+            croak $error;
+        }
+        
+        return $wantarray ? @$result : $result;
+    };
+    
+    # Save this method for future calls
+    no strict 'refs';
+    *$AUTOLOAD = $method_wrap;
+    
+    goto $method_wrap;
+}
+
+
+
+sub _global_tracer_start_active_span {
+    my $operation_name = shift;
+    my @args = @_;
+    
+    return OpenTracing::GlobalTracer->get_global_tracer()->start_active_span(
+        $operation_name,
+        @args,
+    );
+}
+
+
+
+sub generate_error_tags {
+    my ( $db_statement, $error ) = @_;
+    
+    my $error_message = $error;
+    chomp $error_message;
+    
+    my $error_kind = "REDIS_EXCEPTION";
+#   my $error_kind = sprintf("REDIS_EXCEPTION_%s",
+#       $db_statement,
+#   );
+#   
+    return (
+        'error'      => 1,
+        'message'    => $error_message,
+        'error.kind' => $error_kind,
+    );
 }
 
 

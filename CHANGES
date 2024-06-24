@@ -1,6 +1,60 @@
 CHANGE LOG
 ==========
- 
+
+
+2023-07-26 v0.3.0
+-----------------
+- add `error`, `error.kind`, and `message` to spans in case of an exception.
+- improve testing
+
+
+2023-07-21 v0.2.3
+-----------------
+- improve testing
+
+
+2023-07-20 v0.2.2
+-----------------
+- Add and change testing
+- Fix `cpanfile`
+
+
+2023-07-19 v0.2.1
+-----------------
+- Add GitHub workflows
+- Fix `cpanfile`
+
+
+2021-09-27 v0.2.0
+-----------------
+- Add `tags` attribute to be able to set `peer.address` and `component`
+- Set `component` tag to injected `redis` client
+
+
+2021-09-21 v0.1.1
+-----------------
+- Add MetaCPAN resources
+
+
+2021-09-14 v0.1.0
+-----------------
+- Make `redis` attribute required on instantiation.
+- No longer create a default Redis client, bring your own fancy one.
+- Fix issues with smoke tests, using an older `Test::MockObject`.
+
+
+2021-08-31 v0.0.4
+-----------------
+- Fix Dependencies minimal version as mentioned in the `cpanfile`
+- Fix code improvements, and pull `operation_name` outside `do { ... }` block
+- Save the `do { ... }` block into the symbol-table, so we skip all preparations
+
+
+2021-08-30 v0.0.3
+-----------------
+- Code improvements using OpenTracing built-in features
+- Fix Documentation and typo's
+
  
 2021-08-30 v0.0.2
 -----------------
